@@ -1,0 +1,115 @@
+const axios = require("axios");
+const fs = require("fs-extra");
+const path = require("path");
+const jimp = require("jimp");
+
+// Define downloadFile if it isn't imported from elsewhere
+const downloadFile = async (url, dest) => {
+  const writer = fs.createWriteStream(dest);
+  const response = await axios({ url, responseType: 'stream' });
+  response.data.pipe(writer);
+  return new Promise((resolve, reject) => {
+    writer.on('finish', resolve);
+    writer.on('error', reject);
+  });
+};
+
+module.exports = {
+  config: {
+    name: "brother",
+    countDown: 10,
+    author: "MahMUD",
+    role: 0,
+    shortDescription: {
+      en: "make brother",
+    },
+    longDescription: {
+      en: "brother",
+    },
+    category: "love",
+    guide: {
+      en: "{pn}",
+    },
+  },
+
+  onLoad: async () => {
+    const dirMaterial = path.resolve(__dirname, 'cache', 'canvas');
+    const imagePath = path.resolve(dirMaterial, 'Brother.png');
+
+    if (!fs.existsSync(dirMaterial)) {
+      fs.mkdirSync(dirMaterial, { recursive: true });
+    }
+
+    if (!fs.existsSync(imagePath)) {
+      await downloadFile("https://i.imgur.com/n2FGJFe.jpg", imagePath);
+    }
+  },
+
+  async makeImage({ one, two }) {
+    const __root = path.resolve(__dirname, "cache", "canvas");
+
+    let batgiam_img = await jimp.read(path.resolve(__root, "Brother.png"));
+    let pathImg = path.resolve(__root, `batman${one}_${two}.png`);
+    let avatarOne = path.resolve(__root, `avt_${one}.png`);
+    let avatarTwo = path.resolve(__root, `avt_${two}.png`);
+
+    let getAvatarOne = (await axios.get(`https://graph.facebook.com/${two}/picture?width=512&height=512&access_token=6628568379%7Cc1e620fa708a1d5696fb991c1bde5662`, { responseType: 'arraybuffer' })).data;
+    fs.writeFileSync(avatarOne, Buffer.from(getAvatarOne));
+
+    let getAvatarTwo = (await axios.get(`https://graph.facebook.com/${one}/picture?width=512&height=512&access_token=6628568379%7Cc1e620fa708a1d5696fb991c1bde5662`, { responseType: 'arraybuffer' })).data;
+    fs.writeFileSync(avatarTwo, Buffer.from(getAvatarTwo));
+
+    let circleOne = await jimp.read(await this.circle(avatarOne));
+    let circleTwo = await jimp.read(await this.circle(avatarTwo));
+    batgiam_img.composite(circleOne.resize(191, 191), 93, 111)
+      .composite(circleTwo.resize(190, 190), 434, 107);
+
+    let raw = await batgiam_img.getBufferAsync("image/png");
+
+    fs.writeFileSync(pathImg, raw);
+    fs.unlinkSync(avatarOne);
+    fs.unlinkSync(avatarTwo);
+
+    return pathImg;
+  },
+
+  async circle(image) {
+    image = await jimp.read(image);
+    image.circle();
+    return await image.getBufferAsync("image/png");
+  },
+
+  onStart: async function ({ event, api, args }) {
+    const { threadID, messageID, senderID } = event;
+    const mention = Object.keys(event.mentions);
+    
+    // Check if no one is mentioned
+    if (mention.length === 0) {
+      return api.sendMessage("Please mention someone.", threadID, messageID);
+    }
+
+    let one, two;
+    // Check if only one person is mentioned
+    if (mention.length === 1) {
+      one = senderID; // Assign sender to `one` if only one mention
+      two = mention[0]; // Assign mentioned person to `two`
+    } else {
+      one = mention[0]; // First mentioned person
+      two = mention[1]; // Second mentioned person
+    }
+
+    try {
+      // Call the makeImage function with `one` and `two`
+      const imagePath = await this.makeImage({ one, two });
+      
+      // Send the generated image
+      return api.sendMessage({
+        body: "𝐁𝐫𝐨𝐭𝐡𝐞𝐫 𝐒𝐢𝐬𝐭𝐞𝐫 <😘",
+        attachment: fs.createReadStream(imagePath)
+      }, threadID, () => fs.unlinkSync(imagePath), messageID);
+    } catch (error) {
+      console.error("Error making image:", error);
+      return api.sendMessage("An error occurred while processing the image.", threadID, messageID);
+    }
+  }
+};

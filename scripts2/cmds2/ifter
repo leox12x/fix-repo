@@ -1,0 +1,285 @@
+const axios = require("axios");
+const fs = require("fs-extra");
+const path = require("path");
+const moment = require("moment-timezone");
+const mongoose = require("mongoose");
+const { createCanvas, loadImage } = require("canvas");
+
+// Database Schema
+const ramadanTaskSchema = new mongoose.Schema({
+    uid: { type: String, required: true },
+    date: { type: String, required: true },
+    claimed: { type: [String], default: [] }
+});
+const RamadanTask = mongoose.models.RamadanTask || mongoose.model("RamadanTask", ramadanTaskSchema);
+
+// --- MANUAL DUA LIST ---
+const manualDuas = [
+    { title: "ইফতারের দোয়া", arabic: "ذَهَبَ الظَّمَأُ وَابْتَلَّتِ الْعُرُوقُ وَثَبَتَ الأَجْرُ إِنْ শָاءَ اللَّهُ", bangla: "পিপাসা মিটেছে, শিরাগুলো সিক্ত হয়েছে এবং আল্লাহ চাইলে পুরস্কার নির্ধারিত হয়েছে।", fazilat: "ইফতারের সময় দোয়া কবুল হয়।" },
+    { title: "রোজা রাখার নিয়ত", arabic: "নাসাইতু আন আসুমা গাদাম মিন শাহরি রামাদানা আল-মুবারাকি ফারদাল্লাকা ইয়া আল্লাহু ফাতাকাব্বাল মিন্নি ইন্নাকা আনতাস সামিউল আলিম।", bangla: "হে আল্লাহ! আগামীকাল পবিত্র রমজান মাসে তোমার পক্ষ হতে নির্ধারিত ফরজ রোজা রাখার নিয়ত করলাম। অতএব তুমি আমার পক্ষ থেকে তা কবুল কর। নিশ্চয়ই তুমি সর্বশ্রোতা ও সর্বজ্ঞ।", fazilat: "নিয়ত ছাড়া রোজা পূর্ণতা পায় না।" },
+    { title: "ক্ষমা চাওয়ার দোয়া", arabic: "اللَّهُمَّ إِنَّكَ عَفُوٌّ تُحِبُّ الْعَفْوَ فَاعْفُ عَنِّي", bangla: "হে আল্লাহ! আপনি ক্ষমাশীল, আপনি ক্ষমা করতে ভালোবাসেন। অতএব আমাকে ক্ষমা করুন।", fazilat: "এটি শবে কদরের বিশেষ দোয়া।" },
+    { title: "রিজিক বৃদ্ধির দোয়া", arabic: "اللَّهُمَّ اكْفِنِي بِحَلَالِكَ عَنْ حَرَامِكَ وَأَغْنِنِي بِفَضْلِكَ عَمَّনْ সিওয়াকা", bangla: "হে আল্লাহ! হারামের পরিবর্তে তোমার হালাল রিজিক আমার জন্য যথেষ্ট কর এবং তোমার অনুগ্রহে তুমি ছাড়া অন্য সবার থেকে আমাকে অমুখাপেক্ষী কর।", fazilat: "দারিদ্র্য বিমোচনে অত্যন্ত কার্যকরী।" },
+    { title: "পিতা-মাতার জন্য দোয়া", arabic: "رَّبِّ ارْحَمْهُمَا كَمَا رَبَّيَانِي صَغِيرًا", bangla: "হে আমার প্রতিপালক! তাদের উভয়ের প্রতি দয়া করো, যেভাবে তারা আমাকে শৈশবে লালন-পালন করেছেন।", fazilat: "সন্তানের দোয়া পিতা-মাতার কবরের আজাব মাফ করে।" }
+];
+
+const boldText = (text) => {
+    const bold = {"a":"𝐚","b":"𝐛","c":"𝐜","d":"𝐝","e":"𝐞","f":"𝐟","g":"𝐠","h":"𝐡","i":"𝐢","j":"𝐣","k":"𝐤","l":"𝐥","m":"𝐦","n":"𝐧","o":"𝐨","p":"𝐩","q":"𝐪","r":"𝐫","s":"𝐬","t":"𝐭","u":"𝐮","v":"𝐯","w":"𝐰","x":"𝐱","y":"𝐲","z":"𝐳","A":"𝐀","B":"𝐁","C":"𝐂","D":"𝐃","E":"𝐄","F":"𝐅","G":"𝐆","H":"𝐇","I":"𝐈","J":"𝐉","K":"𝐊","L":"𝐋","M":"𝐌","N":"𝐍","O":"𝐎","P":"𝐏","Q":"𝐐","R":"𝐑","S":"𝐒","T":"𝐓","U":"𝐔","V":"𝐖","W":"𝐖","X":"𝐗","Y":"𝐘","Z":"𝐙","0":"𝟎","1":"𝟏","2":"𝟐","3":"𝟑","4":"𝟒","5":"𝟓","6":"𝟔","7":"𝟕","8":"𝟖","9":"𝟗"};
+    return text.split("").map(c => bold[c] || c).join("");
+};
+
+const baseApiUrl = async () => {
+    const res = await axios.get("https://raw.githubusercontent.com/mahmudx7/HINATA/main/baseApiUrl.json");
+    return res.data.mahmud;
+};
+
+module.exports = {
+    config: {
+        name: "ifter",
+        aliases: ["ramadan", "iftar", "sehri", "ramadan2026"],
+        version: "16.1",
+        author: "MahMUD & Gemini",
+        countDown: 10,
+        role: 0,
+        category: "Islamic",
+        guide: { en: "{pn} | {pn} task | {pn} quiz | {pn} qz | {pn} dua | {pn} claim <number>" }
+    },
+
+    onStart: async function ({ api, event, args, message, usersData }) {
+        const { threadID, messageID, senderID } = event;
+        const today = moment.tz("Asia/Dhaka").format("DD/MM/YYYY");
+        let userData = await usersData.get(senderID);
+
+        if (!userData.data) userData.data = {};
+
+        // --- DUA LOGIC ---
+        if (args[0] === "dua") {
+            if (userData.data.duaCount && userData.data.duaCount.lastReset === today && userData.data.duaCount.count >= 1) {
+                return message.reply(boldText("❌ You have already read today's Dua. Please try again tomorrow."));
+            }
+            userData.data.duaCount = { count: 1, lastReset: today };
+            await usersData.set(senderID, userData);
+            const randomDua = manualDuas[Math.floor(Math.random() * manualDuas.length)];
+            const { title, arabic, bangla, fazilat } = randomDua;
+            const duaMsg = `✨ ${boldText(title)}\n\n• ${bangla}\n\n• ${boldText("Virtue:")} ${fazilat}`;
+            return message.reply(duaMsg);
+        }
+
+        // --- QUIZ LOGIC (Works for both 'quiz' and 'qz') ---
+        if (args[0] === "quiz" || args[0] === "qz") {
+            if (userData.data.ramadanQuizCount && userData.data.ramadanQuizCount.lastReset === today && userData.data.ramadanQuizCount.count >= 10) {
+                return message.reply(boldText("❌ You have completed your 10 quiz missions for today. Come back tomorrow! 🌙"));
+            }
+            try {
+                if (!userData.data.ramadanQuizCount || userData.data.ramadanQuizCount.lastReset !== today) {
+                    userData.data.ramadanQuizCount = { count: 1, lastReset: today };
+                } else {
+                    userData.data.ramadanQuizCount.count++;
+                }
+                await usersData.set(senderID, userData);
+                const res = await axios.get(`https://Mahmud-infinity-api.onrender.com/api/quiz2?category=ramadan&lang=bangla`);
+                const quiz = res.data.data;
+                const { question, options, correctAnswer } = quiz;
+                const quizMsg = `╭──✦ ${question}\n├‣ 𝗔) ${options.a}\n├‣ 𝗕) ${options.b}\n├‣ 𝗖) ${options.c}\n├‣ 𝗗) ${options.d}\n╰──────────────────‣\n• 𝐑𝐞𝐩𝐥𝐲 𝐰𝐢𝐭𝐡 𝐲𝐨𝐮𝐫 𝐚𝐧𝐬𝐰𝐞𝐫.\n• 𝐃𝐚𝐢𝐥𝐲 𝐥𝐢𝐦𝐢𝐭: ${userData.data.ramadanQuizCount.count}/10`;
+                return api.sendMessage(quizMsg, threadID, (err, info) => {
+                    global.GoatBot.onReply.set(info.messageID, {
+                        commandName: this.config.name,
+                        type: "quiz_reply",
+                        author: senderID,
+                        correctAnswer,
+                        answered: false
+                    });
+                }, messageID);
+            } catch (e) { return message.reply("❌ Unable to load the Quiz API at the moment."); }
+        }
+
+        const taskRecord = await RamadanTask.findOne({ uid: senderID, date: today }) || { claimed: [] };
+        const hadisCount = (userData.data.hadisCount && userData.data.hadisCount.lastReset === today) ? userData.data.hadisCount.count : 0;
+        const duaCount = (userData.data.duaCount && userData.data.duaCount.lastReset === today) ? userData.data.duaCount.count : 0;
+        const ramadanQuizCount = (userData.data.ramadanQuizCount && userData.data.ramadanQuizCount.lastReset === today) ? userData.data.ramadanQuizCount.count : 0;
+        const cityCheckCount = (userData.data.cityCheckCount && userData.data.cityCheckCount.lastReset === today) ? userData.data.cityCheckCount.count : 0;
+        const ramadanVideoCount = (userData.data.ramadanVideoCount && userData.data.ramadanVideoCount.lastReset === today) ? userData.data.ramadanVideoCount.count : 0;
+        const totalQuizWins = userData.data.totalQuizWins || 0;
+        const megaClaimed = userData.data.megaClaimed || false;
+
+        // --- TASK UI ---
+        if (args[0] === "task") {
+            const width = 950, height = 1830;
+            const canvas = createCanvas(width, height);
+            const ctx = canvas.getContext("2d");
+
+            const bgGrad = ctx.createRadialGradient(width/2, height/2, 100, width/2, height/2, width);
+            bgGrad.addColorStop(0, "#1a1a3a"); bgGrad.addColorStop(1, "#050510");
+            ctx.fillStyle = bgGrad; ctx.fillRect(0, 0, width, height);
+
+            ctx.textAlign = "center"; ctx.shadowBlur = 35; ctx.shadowColor = "#ffd700";
+            ctx.fillStyle = "#ffd700"; ctx.font = "bold 68px Arial";
+            ctx.fillText("RAMADAN EVENT 2026", width / 2, 110); ctx.shadowBlur = 0;
+
+            ctx.fillStyle = "rgba(255, 255, 255, 0.05)"; ctx.strokeStyle = "rgba(255, 215, 0, 0.3)";
+            drawRoundRect(ctx, 60, 180, width - 120, 180, 40); ctx.fill(); ctx.stroke();
+
+            const avatarX = 160, avatarY = 270, avatarR = 65;
+            await drawCircleImage(ctx, senderID, avatarX, avatarY, avatarR);
+
+            ctx.textAlign = "left"; ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 46px Arial";
+            ctx.fillText(userData.name || "User", 260, 255);
+            const completed = taskRecord.claimed.length + (megaClaimed ? 1 : 0);
+            const rate = Math.floor((completed / 8) * 100);
+            ctx.fillStyle = "#ffd700"; ctx.font = "26px Arial";
+            ctx.fillText(`Your Ramadan completion rate: ${rate}%`, 260, 305);
+
+            const tasks = [
+                { id: "1", name: "Are you fasting today?", rew: "Yes: 100k | No: 50k", cur: taskRecord.claimed.includes("1") ? 1 : 0, req: 1 },
+                { id: "2", name: "Use 5 times hadis cmd and Read Hadiths", rew: "500k", cur: hadisCount, req: 5 },
+                { id: "3", name: "Did you recite Quran today?", rew: "Yes: 50k | No: 10k", cur: taskRecord.claimed.includes("3") ? 1 : 0, req: 1 },
+                { id: "4", name: "Read today's Ramadan Dua", rew: "100k", cur: duaCount, req: 1 },
+                { id: "5", name: "Play 10 Ramadan Quiz", rew: "1M", cur: ramadanQuizCount, req: 10 },
+                { id: "6", name: "Check City Iftar time 3 times", rew: "200k", cur: cityCheckCount, req: 3 },
+                { id: "7", name: "Win Total 75 Ramadan Quiz", rew: "10M (Once)", cur: totalQuizWins, req: 75, isMega: true },
+                { id: "8", name: "Watch 2 Ramadan Videos from Album", rew: "400k", cur: ramadanVideoCount, req: 2 }
+            ];
+
+            let y = 420;
+            for (const t of tasks) {
+                const isClaimed = t.isMega ? megaClaimed : taskRecord.claimed.includes(t.id);
+                const progress = Math.min(t.cur / t.req, 1);
+                const isReady = progress >= 1 && !isClaimed;
+
+                ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+                ctx.strokeStyle = isReady ? "#ffd700" : (isClaimed ? "#50fa7b" : "rgba(255, 255, 255, 0.1)");
+                drawRoundRect(ctx, 60, y, width - 120, 130, 25); ctx.fill(); ctx.stroke();
+
+                ctx.textAlign = "left"; ctx.fillStyle = isClaimed ? "#50fa7b" : "#FFFFFF"; ctx.font = "bold 30px Arial";
+                ctx.fillText(`${t.id}. ${t.name}`, 100, y + 50);
+
+                ctx.fillStyle = "#161b22"; drawRoundRect(ctx, 100, y + 85, 500, 14, 7); ctx.fill();
+                if(progress > 0) {
+                    ctx.fillStyle = isClaimed ? "#50fa7b" : "#ffd700";
+                    drawRoundRect(ctx, 100, y + 85, 500 * progress, 14, 7); ctx.fill();
+                }
+
+                ctx.textAlign = "right"; ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 24px Arial";
+                ctx.fillText(`REWARD: ${t.rew}`, width - 100, y + 100);
+                const statusTxt = isClaimed ? "✓ COMPLETE" : (isReady ? "✦ CLAIM" : `${t.cur}/${t.req}`);
+                ctx.fillStyle = isReady ? "#ffd700" : (isClaimed ? "#50fa7b" : "#ff5555");
+                ctx.fillText(statusTxt, width - 100, y + 50);
+                y += 150;
+            }
+
+            const cachePath = path.join(__dirname, "cache", `iftask_${senderID}.png`);
+            fs.writeFileSync(cachePath, canvas.toBuffer("image/png"));
+            return message.reply({ body: boldText(`𝐇𝐞𝐲, ${userData.name} ✨\n• 𝐑𝐚𝐦𝐚𝐝𝐚𝐧 𝐭𝐚𝐬𝐤 𝐫𝐚𝐭𝐞: ${rate}%\n• 𝐓𝐲𝐩𝐞 '𝐢𝐟𝐭𝐞𝐫 𝐜𝐥𝐚𝐢𝐦 (𝐧𝐮𝐦𝐛𝐞𝐫)' 𝐭𝐨 𝐜𝐨𝐥𝐥𝐞𝐜𝐭 𝐫𝐞𝐰𝐚𝐫𝐝𝐬.`), attachment: fs.createReadStream(cachePath) }, () => fs.unlinkSync(cachePath));
+        }
+
+        // --- CLAIM LOGIC ---
+        if (args[0] === "claim") {
+            const taskNum = args[1];
+            let reward = 0, taskName = "";
+
+            if (taskNum === "7") {
+                if (userData.data.megaClaimed) return message.reply(boldText("❌ Already claimed this achievement!"));
+                if (totalQuizWins < 75) return message.reply(boldText(`❌ Incomplete! You have won ${totalQuizWins}/75 quizzes.`));
+                reward = 10000000; taskName = "Mega Quiz Achievement (75 Wins)";
+                userData.data.megaClaimed = true;
+            } else {
+                if (taskRecord.claimed.includes(taskNum)) return message.reply(boldText("❌ Already claimed today!"));
+                if (taskNum === "1") {
+                    const choice = (args[2] || "").toLowerCase();
+                    if (!["yes", "no"].includes(choice)) return message.reply(boldText("❓ Type: ifter claim 1 yes/no"));
+                    reward = choice === "yes" ? 100000 : 50000; taskName = "Daily Fasting Status";
+                } else if (taskNum === "2") {
+                    if (hadisCount < 5) return message.reply(boldText(`❌ Incomplete! You have read ${hadisCount}/5 hadiths.`));
+                    reward = 500000; taskName = "Hadith Reading Mission";
+                } else if (taskNum === "3") {
+                    const choice = (args[2] || "").toLowerCase();
+                    if (!["yes", "no"].includes(choice)) return message.reply(boldText("❓ Recited Quran? Type: ifter claim 3 yes/no"));
+                    reward = choice === "yes" ? 50000 : 10000; taskName = "Quran Recitation Mission";
+                } else if (taskNum === "4") {
+                    if (duaCount < 1) return message.reply(boldText("❌ Incomplete! Type 'ifter dua' first."));
+                    reward = 50000; taskName = "Daily Dua Mission";
+                } else if (taskNum === "5") {
+                    if (ramadanQuizCount < 10) return message.reply(boldText(`❌ Incomplete! You played ${ramadanQuizCount}/10 quizzes.`));
+                    reward = 1000000; taskName = "Ramadan Quiz Mission";
+                } else if (taskNum === "6") {
+                    if (cityCheckCount < 3) return message.reply(boldText(`❌ Incomplete! You checked city time ${cityCheckCount}/3 times.`));
+                    reward = 200000; taskName = "City Info Mission";
+                } else if (taskNum === "8") {
+                    if (ramadanVideoCount < 2) return message.reply(boldText(`❌ Incomplete! Watch ${ramadanVideoCount}/2 Ramadan videos from the album.`));
+                    reward = 400000; taskName = "Ramadan Video Mission";
+                } else return message.reply(boldText("❌ Invalid task number."));
+                
+                await RamadanTask.findOneAndUpdate({ uid: senderID, date: today }, { $addToSet: { claimed: taskNum } }, { upsert: true });
+            }
+
+            userData.money += reward;
+            await usersData.set(senderID, userData);
+            return message.reply(boldText(`✅ Successfully claimed task!\n• Reward: ${reward.toLocaleString()}\n• Task: ${taskName}`));
+        }
+
+        // --- IFTAR INFO ---
+        let city = args[0] || "Dhaka";
+        let style = args.includes("--style") ? args[args.indexOf("--style") + 1] : (args[1] || "1");
+        try {
+            api.setMessageReaction("⌛", messageID, () => {}, true);
+            if (!userData.data.cityCheckCount || userData.data.cityCheckCount.lastReset !== today) {
+                userData.data.cityCheckCount = { count: 1, lastReset: today };
+            } else {
+                if (userData.data.cityCheckCount.count < 3) userData.data.cityCheckCount.count++;
+            }
+            await usersData.set(senderID, userData);
+
+            const baseUrl = await baseApiUrl();
+            const res = await axios.get(`${baseUrl}/api/ramadan`, { params: { city, style } });
+            const data = res.data;
+            const msg = `🌙 ${data.today.ramadan} RAMADAN KAREEM 🌙\n• City: ${data.city}\n• Sehri: ${data.today.sehri} | Iftar: ${data.today.iftar}\n\n📝 Daily Missions: 'ifter task' | 'ifter quiz' | 'ifter dua'`;
+            const imageBuffer = Buffer.from(data.image, "base64");
+            const infoPath = path.join(__dirname, "cache", `info_${senderID}.png`);
+            await fs.outputFile(infoPath, imageBuffer);
+            api.sendMessage({ body: msg, attachment: fs.createReadStream(infoPath) }, threadID, () => fs.unlinkSync(infoPath), messageID);
+            api.setMessageReaction("✅", messageID, () => {}, true);
+        } catch (e) { message.reply("Could not fetch Ramadan timings. Please check the city name."); }
+    },
+
+    onReply: async function ({ api, event, Reply, usersData }) {
+        const { senderID, body, messageID: replyMsgID } = event;
+        const { correctAnswer, author, answered, type } = Reply;
+        const gameMessageID = event.messageReply.messageID;
+
+        if (type === "quiz_reply") {
+            if (senderID !== author || answered) return;
+            const userAnswer = body?.trim()?.toLowerCase();
+            if (!["a", "b", "c", "d"].includes(userAnswer)) return;
+            Reply.answered = true;
+            let userData = await usersData.get(senderID);
+            if (userAnswer === correctAnswer.toLowerCase()) {
+                userData.money += 1000;
+                userData.exp = (userData.exp || 0) + 121;
+                userData.data.totalQuizWins = (userData.data.totalQuizWins || 0) + 1;
+                await usersData.set(senderID, userData);
+                api.editMessage(`✅ | SubhanAllah! Correct answer.\n• Total Wins: ${userData.data.totalQuizWins}\n• Earned 1,000 coins & 121 exp.`, gameMessageID);
+            } else {
+                userData.money = Math.max(0, (userData.money || 0) - 300);
+                userData.exp = Math.max(0, (userData.exp || 0) - 100);
+                await usersData.set(senderID, userData);
+                api.editMessage(`❌ | That is incorrect!\n• Correct Answer: ${correctAnswer.toUpperCase()}\n• Lost 300 coins & 100 exp.`, gameMessageID);
+            }
+            api.unsendMessage(replyMsgID);
+            global.GoatBot.onReply.delete(gameMessageID);
+        }
+    }
+};
+
+async function drawCircleImage(ctx, uid, x, y, radius) {
+    ctx.save(); ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.clip();
+    try {
+        const img = await loadImage(`https://graph.facebook.com/${uid}/picture?width=512&height=512&access_token=6628568379%7Cc1e620fa708a1d5696fb991c1bde5662`);
+        ctx.drawImage(img, x - radius, y - radius, radius * 2, radius * 2);
+    } catch (e) { ctx.fillStyle = "#333"; ctx.fill(); }
+    ctx.restore();
+}
+
+function drawRoundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+}
